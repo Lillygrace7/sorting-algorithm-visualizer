@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SortViz Pro | Full UI Restored</title>
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --surface-color: #1e293b;
+            --primary-color: #38bdf8;
+            --accent-color: #f472b6;
+            --text-color: #f1f5f9;
+            --bar-default: #6366f1;
+            --bar-compare: #f43f5e;
+            --bar-swap: #fbbf24;
+            --bar-sorted: #22c55e;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
+        body { background-color: var(--bg-color); color: var(--text-color); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+        header {
+            background-color: var(--surface-color);
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #334155;
+        }
+
+        .controls { display: flex; gap: 1.2rem; align-items: flex-end; }
+        .control-group { display: flex; flex-direction: column; gap: 0.3rem; }
+        label { font-size: 0.65rem; text-transform: uppercase; color: #94a3b8; font-weight: bold; }
+
+        input[type="range"], select { background: #0f172a; border: 1px solid #334155; color: white; padding: 6px; border-radius: 4px; outline: none; }
+
+        button { padding: 0.6rem 1.2rem; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; background: #334155; color: white; transition: 0.2s; }
+        button:hover:not(:disabled) { background: #475569; }
+        .btn-start { background: var(--primary-color); color: #000; }
+        .btn-next { background: var(--accent-color); color: #fff; }
+        #resetBtn { background: #ef4444; }
+        button:disabled { opacity: 0.2; cursor: not-allowed; }
+
+        /* Stats Dashboard */
+        .stats-dashboard {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            background: #1e293b;
+            padding: 0.8rem 2rem;
+            gap: 1rem;
+            border-bottom: 1px solid #334155;
+        }
+
+        .stat-card { display: flex; flex-direction: column; align-items: center; text-align: center; }
+        .stat-card span { font-family: 'Courier New', monospace; font-size: 1.1rem; color: var(--primary-color); font-weight: bold; }
+
+        #visualizerContainer {
+            flex-grow: 1;
+            display: flex;
+            align-items: flex-end;
+            justify-content: center;
+            padding: 2rem;
+            gap: 4px;
+        }
+
+        .bar { background-color: var(--bar-default); width: 100%; border-radius: 4px 4px 0 0; }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="logo">Sort<span>Viz</span> Pro</div>
+        <nav class="controls">
+            <div class="control-group">
+                <button id="newArray">New Array</button>
+            </div>
+            <div class="control-group">
+                <label>Size</label>
+                <input id="arraySize" type="range" min="5" max="60" step="1" value="30">
+            </div>
+            <div class="control-group">
+                <label>Speed</label>
+                <input id="sortSpeed" type="range" min="1" max="200" step="1" value="150">
+            </div>
+            <div class="control-group">
+                <label>Algorithm</label>
+                <select id="algoSelect">
+                    <option value="bubble">Bubble Sort</option>
+                    <option value="selection">Selection Sort</option>
+                    <option value="insertion">Insertion Sort</option>
+                    <option value="merge">Merge Sort</option>
+                    <option value="quick">Quick Sort</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+                    <input type="checkbox" id="stepModeToggle"> Step Mode
+                </label>
+            </div>
+            <div class="control-group">
+                <button id="startSort" class="btn-start">Start</button>
+            </div>
+            <div class="control-group">
+                <button id="nextBtn" class="btn-next" disabled>Next</button>
+            </div>
+            <div class="control-group">
+                <button id="resetBtn">Reset</button>
+            </div>
+        </nav>
+    </header>
+
+    <section class="stats-dashboard">
+        <div class="stat-card"><label>Time Complexity</label><span id="timeComp">-</span></div>
+        <div class="stat-card"><label>Space Complexity</label><span id="spaceComp">-</span></div>
+        <div class="stat-card"><label>Comparisons</label><span id="compCount">0</span></div>
+        <div class="stat-card"><label>Moves / Swaps</label><span id="swapCount">0</span></div>
+        <div class="stat-card"><label>Status</label><span id="statusLabel">Idle</span></div>
+    </section>
+
+    <main id="visualizerContainer"></main>
+
+    <script>
+        const container = document.getElementById('visualizerContainer');
+        const algoSelect = document.getElementById('algoSelect');
+        const compDisplay = document.getElementById('compCount');
+        const swapDisplay = document.getElementById('swapCount');
+        const statusLabel = document.getElementById('statusLabel');
+        const stepModeToggle = document.getElementById('stepModeToggle');
+        const nextBtn = document.getElementById('nextBtn');
+        const speedInput = document.getElementById('sortSpeed');
+        const sizeInput = document.getElementById('arraySize');
+
+        let array = [];
+        let isSorting = false;
+        let cancelSorting = false; 
+        let comparisons = 0;
+        let swaps = 0;
+        let resolveNextStep;
+
+        const complexityMap = {
+            bubble: { time: "O(n²)", space: "O(1)" },
+            selection: { time: "O(n²)", space: "O(1)" },
+            insertion: { time: "O(n²)", space: "O(1)" },
+            merge: { time: "O(n log n)", space: "O(n)" },
+            quick: { time: "O(n log n)", space: "O(log n)" }
+        };
+
+        function generateArray() {
+            if (isSorting) return;
+            cancelSorting = false;
+            container.innerHTML = '';
+            array = [];
+            comparisons = 0; swaps = 0;
+            compDisplay.innerText = 0; swapDisplay.innerText = 0;
+            statusLabel.innerText = "Ready";
+            
+            const size = sizeInput.value;
+            for (let i = 0; i < size; i++) {
+                const val = Math.floor(Math.random() * 90) + 5;
+                array.push(val);
+                const bar = document.createElement('div');
+                bar.classList.add('bar');
+                bar.style.height = `${val}%`;
+                bar.id = `bar-${i}`;
+                container.appendChild(bar);
+            }
+            updateComplexityUI();
+        }
+
+        async function wait() {
+            if (cancelSorting) throw new Error("SORT_CANCELLED");
+
+            if (stepModeToggle.checked) {
+                statusLabel.innerText = "Paused (Click Next)";
+                nextBtn.disabled = false;
+                return new Promise(resolve => { resolveNextStep = resolve; });
+            } else {
+                statusLabel.innerText = "Sorting...";
+                nextBtn.disabled = true;
+                const delay = 201 - speedInput.value; // Speed logic: higher value = lower delay
+                return new Promise(resolve => setTimeout(resolve, delay));
+            }
+        }
+
+        function setBarColor(index, color) {
+            const bar = document.getElementById(`bar-${index}`);
+            if (bar) bar.style.backgroundColor = `var(--${color})`;
+        }
+
+        async function doSwap(i, j) {
+            swaps++; swapDisplay.innerText = swaps;
+            const barI = document.getElementById(`bar-${i}`);
+            const barJ = document.getElementById(`bar-${j}`);
+            [barI.style.height, barJ.style.height] = [barJ.style.height, barI.style.height];
+            [array[i], array[j]] = [array[j], array[i]];
+            setBarColor(i, 'bar-swap');
+            setBarColor(j, 'bar-swap');
+            await wait();
+        }
+
+        function updateComplexityUI() {
+            const algo = algoSelect.value;
+            document.getElementById('timeComp').innerText = complexityMap[algo].time;
+            document.getElementById('spaceComp').innerText = complexityMap[algo].space;
+        }
+
+        // --- Algorithms ---
+
+        async function bubbleSort() {
+            for (let i = 0; i < array.length; i++) {
+                for (let j = 0; j < array.length - i - 1; j++) {
+                    comparisons++; compDisplay.innerText = comparisons;
+                    setBarColor(j, 'bar-compare');
+                    setBarColor(j+1, 'bar-compare');
+                    await wait();
+                    if (array[j] > array[j + 1]) await doSwap(j, j + 1);
+                    setBarColor(j, 'bar-default');
+                    setBarColor(j+1, 'bar-default');
+                }
+                setBarColor(array.length - 1 - i, 'bar-sorted');
+            }
+        }
+
+        async function selectionSort() {
+            for (let i = 0; i < array.length; i++) {
+                let min = i;
+                for (let j = i + 1; j < array.length; j++) {
+                    comparisons++; compDisplay.innerText = comparisons;
+                    setBarColor(j, 'bar-compare');
+                    await wait();
+                    if (array[j] < array[min]) {
+                        setBarColor(min, 'bar-default');
+                        min = j;
+                    } else setBarColor(j, 'bar-default');
+                }
+                await doSwap(i, min);
+                setBarColor(i, 'bar-sorted');
+            }
+        }
+
+        async function insertionSort() {
+            for (let i = 1; i < array.length; i++) {
+                let key = array[i];
+                let j = i - 1;
+                while (j >= 0 && array[j] > key) {
+                    comparisons++; compDisplay.innerText = comparisons;
+                    await doSwap(j + 1, j);
+                    j--;
+                }
+                for(let k=0; k<=i; k++) setBarColor(k, 'bar-sorted');
+            }
+        }
+
+        async function quickSort(s=0, e=array.length-1) {
+            if (s >= e) { if(s>=0 && s<array.length) setBarColor(s, 'bar-sorted'); return; }
+            let p = await partition(s, e);
+            await quickSort(s, p - 1);
+            await quickSort(p + 1, e);
+        }
+
+        async function partition(s, e) {
+            let pivot = array[e];
+            let i = s - 1;
+            for (let j = s; j < e; j++) {
+                comparisons++; compDisplay.innerText = comparisons;
+                setBarColor(j, 'bar-compare');
+                await wait();
+                if (array[j] < pivot) { i++; await doSwap(i, j); }
+                setBarColor(j, 'bar-default');
+            }
+            await doSwap(i + 1, e);
+            setBarColor(i + 1, 'bar-sorted');
+            return i + 1;
+        }
+
+        async function mergeSort(s=0, e=array.length-1) {
+            if (s >= e) return;
+            let m = Math.floor((s+e)/2);
+            await mergeSort(s, m);
+            await mergeSort(m+1, e);
+            await merge(s, m, e);
+        }
+
+        async function merge(s, m, e) {
+            let left = array.slice(s, m+1);
+            let right = array.slice(m+1, e+1);
+            let i=0, j=0, k=s;
+            while(i < left.length && j < right.length) {
+                comparisons++; compDisplay.innerText = comparisons;
+                if(left[i] <= right[j]) { array[k] = left[i]; i++; }
+                else { array[k] = right[j]; j++; }
+                document.getElementById(`bar-${k}`).style.height = `${array[k]}%`;
+                setBarColor(k, 'bar-sorted');
+                k++; swaps++; swapDisplay.innerText = swaps; await wait();
+            }
+            while(i < left.length) { array[k] = left[i]; document.getElementById(`bar-${k}`).style.height = `${array[k]}%`; setBarColor(k, 'bar-sorted'); i++; k++; swaps++; await wait(); }
+            while(j < right.length) { array[k] = right[j]; document.getElementById(`bar-${k}`).style.height = `${array[k]}%`; setBarColor(k, 'bar-sorted'); j++; k++; swaps++; await wait(); }
+        }
+
+        // --- Controllers ---
+
+        async function start() {
+            if (isSorting) return;
+            isSorting = true;
+            cancelSorting = false;
+            toggleControls(true);
+            
+            try {
+                const algo = algoSelect.value;
+                if (algo === 'bubble') await bubbleSort();
+                if (algo === 'selection') await selectionSort();
+                if (algo === 'insertion') await insertionSort();
+                if (algo === 'quick') await quickSort();
+                if (algo === 'merge') await mergeSort();
+                statusLabel.innerText = "Finished!";
+            } catch (e) {
+                statusLabel.innerText = "Sort Reset";
+            }
+
+            isSorting = false;
+            toggleControls(false);
+        }
+
+        function toggleControls(bool) {
+            document.getElementById('startSort').disabled = bool;
+            document.getElementById('newArray').disabled = bool;
+            sizeInput.disabled = bool;
+            algoSelect.disabled = bool;
+        }
+
+        // Event Handlers
+        document.getElementById('startSort').onclick = start;
+        document.getElementById('newArray').onclick = generateArray;
+        document.getElementById('nextBtn').onclick = () => resolveNextStep && resolveNextStep();
+        document.getElementById('resetBtn').onclick = () => {
+            cancelSorting = true;
+            if (resolveNextStep) resolveNextStep(); // Stop Step Mode hang
+            setTimeout(generateArray, 100);
+        };
+        sizeInput.oninput = generateArray;
+        algoSelect.onchange = updateComplexityUI;
+
+        document.addEventListener('DOMContentLoaded', generateArray);
+    </script>
+</body>
+</html>
